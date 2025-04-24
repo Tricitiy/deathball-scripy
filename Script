@@ -1,0 +1,51 @@
+-- Variables
+local parryDistance = 15 -- The distance at which auto parry triggers
+local ball = workspace:WaitForChild("Ball") -- Assuming the ball part is named "Ball"
+local player = game.Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+-- Toggle for auto parry
+local autoParryEnabled = true
+
+-- Function to simulate the "F" key press
+local function simulateKeyPress()
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+end
+
+-- Update loop
+game:GetService("RunService").Heartbeat:Connect(function()
+    if not autoParryEnabled then return end
+
+    -- Calculate the distance from the ball to the player
+    local distance = (ball.Position - humanoidRootPart.Position).Magnitude
+
+    -- If the ball is within the parry distance, simulate pressing the F key
+    if distance <= parryDistance then
+        simulateKeyPress()
+    end
+end)
+
+-- Mobile-friendly GUI for toggling auto parry
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Parent = player.PlayerGui
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 200, 0, 50)
+toggleButton.Position = UDim2.new(0.5, -100, 0.9, -25)
+toggleButton.Text = "Toggle Auto Parry"
+toggleButton.Parent = ScreenGui
+
+-- Positioning the button closer to the mobile screen for easier touch
+toggleButton.Position = UDim2.new(0.5, -100, 0.95, -25)
+
+-- Toggle the auto parry feature when the button is clicked
+toggleButton.MouseButton1Click:Connect(function()
+    autoParryEnabled = not autoParryEnabled
+    if autoParryEnabled then
+        toggleButton.Text = "Auto Parry: ON"
+    else
+        toggleButton.Text = "Auto Parry: OFF"
+    end
+end)
