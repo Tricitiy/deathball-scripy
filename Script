@@ -4,7 +4,7 @@
 
 local Camera = workspace.CurrentCamera
 
-local AIM_ASSIST_RADIUS   = 95
+local AIM_ASSIST_RADIUS   = 300
 local AIM_ASSIST_ANGLE    = 15
 local AIM_ASSIST_STRENGTH = 1
 
