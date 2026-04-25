@@ -6,9 +6,9 @@ local RunService       = game:GetService("RunService")
 local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
 
-local AIM_ASSIST_RADIUS   = 70
-local AIM_ASSIST_ANGLE    = 4
-local AIM_ASSIST_STRENGTH = 0.4
+local AIM_ASSIST_RADIUS   = 100
+local AIM_ASSIST_ANGLE    = 8
+local AIM_ASSIST_STRENGTH = 1
 
 local function getScreenCenter()
     return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
