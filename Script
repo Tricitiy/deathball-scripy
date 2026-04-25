@@ -1,10 +1,10 @@
 ------------------------------------------------------------
--- Aim Assist (Whitelisted + Gun holders only)
+-- Aim Assist (Global Target Version)
 ------------------------------------------------------------
 
 local Camera = workspace.CurrentCamera
 
-local AIM_ASSIST_RADIUS   = 300
+local AIM_ASSIST_RADIUS   = 500
 local AIM_ASSIST_ANGLE    = 15
 local AIM_ASSIST_STRENGTH = 1
 
@@ -30,7 +30,8 @@ local function findAimAssistTarget()
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
-        if not isKnifeHolder(player) then continue end
+        
+        -- Removed role check (isKnifeHolder) to target everyone
         local enemyChar = player.Character
         if not enemyChar then continue end
         local enemyHrp = enemyChar:FindFirstChild("HumanoidRootPart")
@@ -52,7 +53,7 @@ end
 
 local function applyAimAssist()
     if not WHITELIST[LocalPlayer.Name] then return end
-    if not isHoldingGun(LocalPlayer) then return end
+    -- Removed the gun check here
 
     local target = findAimAssistTarget()
     if not target then return end
@@ -63,3 +64,5 @@ local function applyAimAssist()
 
     Camera.CFrame = camCFrame:Lerp(targetCFrame, AIM_ASSIST_STRENGTH)
 end
+
+RunService.Heartbeat:Connect(applyAimAssist)
