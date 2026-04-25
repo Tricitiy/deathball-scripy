@@ -1,51 +1,65 @@
--- Variables
-local parryDistance = 15 -- The distance at which auto parry triggers
-local ball = workspace:WaitForChild("Ball") -- Assuming the ball part is named "Ball"
-local player = game.Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-local UserInputService = game:GetService("UserInputService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+------------------------------------------------------------
+-- Aim Assist (Whitelisted + Gun holders only)
+------------------------------------------------------------
 
--- Toggle for auto parry
-local autoParryEnabled = true
+local Camera = workspace.CurrentCamera
 
--- Function to simulate the "F" key press
-local function simulateKeyPress()
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F, false, game)
+local AIM_ASSIST_RADIUS   = 95
+local AIM_ASSIST_ANGLE    = 15
+local AIM_ASSIST_STRENGTH = 1
+
+local function getScreenCenter()
+    return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 end
 
--- Update loop
-game:GetService("RunService").Heartbeat:Connect(function()
-    if not autoParryEnabled then return end
+local function getScreenDist(targetPosition)
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPosition)
+    if not onScreen then return math.huge end
+    local screenVec = Vector2.new(screenPos.X, screenPos.Y)
+    return (screenVec - getScreenCenter()).Magnitude
+end
 
-    -- Calculate the distance from the ball to the player
-    local distance = (ball.Position - humanoidRootPart.Position).Magnitude
+local function findAimAssistTarget()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
 
-    -- If the ball is within the parry distance, simulate pressing the F key
-    if distance <= parryDistance then
-        simulateKeyPress()
+    local bestTarget   = nil
+    local bestScreenDist = math.huge
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        if not isKnifeHolder(player) then continue end
+        local enemyChar = player.Character
+        if not enemyChar then continue end
+        local enemyHrp = enemyChar:FindFirstChild("HumanoidRootPart")
+        if not enemyHrp then continue end
+
+        local worldDist = (hrp.Position - enemyHrp.Position).Magnitude
+        if worldDist > AIM_ASSIST_RADIUS then continue end
+
+        local screenDist = getScreenDist(enemyHrp.Position)
+        local angleThreshold = AIM_ASSIST_ANGLE * (Camera.ViewportSize.X / 2) / 90
+        if screenDist < angleThreshold and screenDist < bestScreenDist then
+            bestScreenDist = screenDist
+            bestTarget = enemyHrp
+        end
     end
-end)
 
--- Mobile-friendly GUI for toggling auto parry
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = player.PlayerGui
-local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0, 200, 0, 50)
-toggleButton.Position = UDim2.new(0.5, -100, 0.9, -25)
-toggleButton.Text = "Toggle Auto Parry"
-toggleButton.Parent = ScreenGui
+    return bestTarget
+end
 
--- Positioning the button closer to the mobile screen for easier touch
-toggleButton.Position = UDim2.new(0.5, -100, 0.95, -25)
+local function applyAimAssist()
+    if not WHITELIST[LocalPlayer.Name] then return end
+    if not isHoldingGun(LocalPlayer) then return end
 
--- Toggle the auto parry feature when the button is clicked
-toggleButton.MouseButton1Click:Connect(function()
-    autoParryEnabled = not autoParryEnabled
-    if autoParryEnabled then
-        toggleButton.Text = "Auto Parry: ON"
-    else
-        toggleButton.Text = "Auto Parry: OFF"
-    end
-end)
+    local target = findAimAssistTarget()
+    if not target then return end
+
+    local camCFrame    = Camera.CFrame
+    local dirToTarget  = (target.Position - camCFrame.Position).Unit
+    local targetCFrame = CFrame.lookAt(camCFrame.Position, camCFrame.Position + dirToTarget)
+
+    Camera.CFrame = camCFrame:Lerp(targetCFrame, AIM_ASSIST_STRENGTH)
+end
