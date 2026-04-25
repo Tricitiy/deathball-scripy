@@ -1,12 +1,14 @@
 ------------------------------------------------------------
--- Aim Assist (Global Target Version)
+-- Aim Assist (Universal Version - No Whitelist)
 ------------------------------------------------------------
-
-local Camera = workspace.CurrentCamera
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local LocalPlayer      = Players.LocalPlayer
+local Camera           = workspace.CurrentCamera
 
 local AIM_ASSIST_RADIUS   = 500
 local AIM_ASSIST_ANGLE    = 15
-local AIM_ASSIST_STRENGTH = 1
+local AIM_ASSIST_STRENGTH = 0.7
 
 local function getScreenCenter()
     return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
@@ -25,23 +27,26 @@ local function findAimAssistTarget()
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return nil end
 
-    local bestTarget   = nil
+    local bestTarget     = nil
     local bestScreenDist = math.huge
 
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
-        
-        -- Removed role check (isKnifeHolder) to target everyone
+
         local enemyChar = player.Character
         if not enemyChar then continue end
+
         local enemyHrp = enemyChar:FindFirstChild("HumanoidRootPart")
-        if not enemyHrp then continue end
+        local enemyHum = enemyChar:FindFirstChildOfClass("Humanoid")
+
+        if not enemyHrp or (enemyHum and enemyHum.Health <= 0) then continue end
 
         local worldDist = (hrp.Position - enemyHrp.Position).Magnitude
         if worldDist > AIM_ASSIST_RADIUS then continue end
 
         local screenDist = getScreenDist(enemyHrp.Position)
         local angleThreshold = AIM_ASSIST_ANGLE * (Camera.ViewportSize.X / 2) / 90
+
         if screenDist < angleThreshold and screenDist < bestScreenDist then
             bestScreenDist = screenDist
             bestTarget = enemyHrp
@@ -52,9 +57,6 @@ local function findAimAssistTarget()
 end
 
 local function applyAimAssist()
-    if not WHITELIST[LocalPlayer.Name] then return end
-    -- Removed the gun check here
-
     local target = findAimAssistTarget()
     if not target then return end
 
