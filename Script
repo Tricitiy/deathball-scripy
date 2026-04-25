@@ -7,8 +7,8 @@ local LocalPlayer      = Players.LocalPlayer
 local Camera           = workspace.CurrentCamera
 
 local AIM_ASSIST_RADIUS   = 70
-local AIM_ASSIST_ANGLE    = 7
-local AIM_ASSIST_STRENGTH = 0.7
+local AIM_ASSIST_ANGLE    = 4
+local AIM_ASSIST_STRENGTH = 0.4
 
 local function getScreenCenter()
     return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
