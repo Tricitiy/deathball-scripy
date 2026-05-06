@@ -1,70 +1,224 @@
 ------------------------------------------------------------
--- Aim Assist (Universal Version - No Whitelist)
+-- ESP + Dash Script
+-- ESP: Knife=Red, Gun=Blue, Innocent=Green
+-- Dash: Always visible and functional
 ------------------------------------------------------------
-local Players          = game:GetService("Players")
-local RunService       = game:GetService("RunService")
-local LocalPlayer      = Players.LocalPlayer
-local Camera           = workspace.CurrentCamera
 
-local AIM_ASSIST_RADIUS   = 100
-local AIM_ASSIST_ANGLE    = 8
-local AIM_ASSIST_STRENGTH = 1
+local Players      = game:GetService("Players")
+local RunService   = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local LocalPlayer  = Players.LocalPlayer
+local PlayerGui    = LocalPlayer.PlayerGui
 
-local function getScreenCenter()
-    return Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+local KNIFE_KEYWORDS = {"knife", "blade", "dagger", "shiv", "shard", "slash"}
+local GUN_KEYWORDS   = {"gun", "sheriff", "pistol", "revolver"}
+
+local COLOR_KNIFE    = Color3.fromRGB(255, 50,  50)
+local COLOR_GUN      = Color3.fromRGB(50,  120, 255)
+local COLOR_INNOCENT = Color3.fromRGB(50,  220, 80)
+
+local FILL_TRANSPARENCY    = 1
+local OUTLINE_TRANSPARENCY = 0
+
+local DASH_DISTANCE  = 17
+local DASH_SPEED     = 55
+local DASH_COOLDOWN  = 8
+
+------------------------------------------------------------
+-- Keyword matcher
+------------------------------------------------------------
+local function matchesAny(name, keywords)
+    local lower = string.lower(name)
+    for _, kw in ipairs(keywords) do
+        if string.find(lower, kw) then return true end
+    end
+    return false
 end
 
-local function getScreenDist(targetPosition)
-    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPosition)
-    if not onScreen then return math.huge end
-    local screenVec = Vector2.new(screenPos.X, screenPos.Y)
-    return (screenVec - getScreenCenter()).Magnitude
-end
-
-local function findAimAssistTarget()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
-
-    local bestTarget     = nil
-    local bestScreenDist = math.huge
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-
-        local enemyChar = player.Character
-        if not enemyChar then continue end
-
-        local enemyHrp = enemyChar:FindFirstChild("HumanoidRootPart")
-        local enemyHum = enemyChar:FindFirstChildOfClass("Humanoid")
-
-        if not enemyHrp or (enemyHum and enemyHum.Health <= 0) then continue end
-
-        local worldDist = (hrp.Position - enemyHrp.Position).Magnitude
-        if worldDist > AIM_ASSIST_RADIUS then continue end
-
-        local screenDist = getScreenDist(enemyHrp.Position)
-        local angleThreshold = AIM_ASSIST_ANGLE * (Camera.ViewportSize.X / 2) / 90
-
-        if screenDist < angleThreshold and screenDist < bestScreenDist then
-            bestScreenDist = screenDist
-            bestTarget = enemyHrp
+------------------------------------------------------------
+-- Weapon type detection
+------------------------------------------------------------
+local function getWeaponType(player)
+    local char = player.Character
+    if char then
+        for _, item in ipairs(char:GetChildren()) do
+            if item:IsA("Tool") then
+                if matchesAny(item.Name, KNIFE_KEYWORDS) then return "knife" end
+                if matchesAny(item.Name, GUN_KEYWORDS)   then return "gun"   end
+            end
         end
     end
-
-    return bestTarget
+    local bp = player:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") then
+                if matchesAny(item.Name, KNIFE_KEYWORDS) then return "knife" end
+                if matchesAny(item.Name, GUN_KEYWORDS)   then return "gun"   end
+            end
+        end
+    end
+    return "none"
 end
 
-local function applyAimAssist()
-    local target = findAimAssistTarget()
-    if not target then return end
-
-    local camCFrame    = Camera.CFrame
-    local dirToTarget  = (target.Position - camCFrame.Position).Unit
-    local targetCFrame = CFrame.lookAt(camCFrame.Position, camCFrame.Position + dirToTarget)
-
-    Camera.CFrame = camCFrame:Lerp(targetCFrame, AIM_ASSIST_STRENGTH)
+------------------------------------------------------------
+-- ESP
+------------------------------------------------------------
+local function applyHighlight(character, color)
+    local hl = character:FindFirstChildOfClass("Highlight")
+    if not hl then
+        hl = Instance.new("Highlight")
+        hl.Adornee = character
+        hl.Parent  = character
+    end
+    hl.FillColor           = color
+    hl.OutlineColor        = color
+    hl.FillTransparency    = FILL_TRANSPARENCY
+    hl.OutlineTransparency = OUTLINE_TRANSPARENCY
+    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
 end
 
-RunService.Heartbeat:Connect(applyAimAssist)
+local function updateESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player == LocalPlayer then continue end
+        local char = player.Character
+        if not char then continue end
+        local ok, weapon = pcall(getWeaponType, player)
+        if not ok then continue end
+        if weapon == "knife" then
+            applyHighlight(char, COLOR_KNIFE)
+        elseif weapon == "gun" then
+            applyHighlight(char, COLOR_GUN)
+        else
+            applyHighlight(char, COLOR_INNOCENT)
+        end
+    end
+end
+
+local function watchPlayer(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(1)
+        local ok, weapon = pcall(getWeaponType, player)
+        if ok and player.Character then
+            local color = weapon == "knife" and COLOR_KNIFE
+                       or weapon == "gun"   and COLOR_GUN
+                       or COLOR_INNOCENT
+            applyHighlight(player.Character, color)
+        end
+    end)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do watchPlayer(p) end
+Players.PlayerAdded:Connect(watchPlayer)
+
+------------------------------------------------------------
+-- Dash Button GUI
+------------------------------------------------------------
+local dashGui = Instance.new("ScreenGui")
+dashGui.Name           = "DashGui"
+dashGui.ResetOnSpawn   = false
+dashGui.IgnoreGuiInset = true
+dashGui.Parent         = PlayerGui
+
+local dashBtn = Instance.new("TextButton")
+dashBtn.Size             = UDim2.new(0, 80, 0, 80)
+dashBtn.Position         = UDim2.new(1, -95, 0.25, 0)
+dashBtn.AnchorPoint      = Vector2.new(0, 0.5)
+dashBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
+dashBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
+dashBtn.Text             = "Dash"
+dashBtn.TextScaled       = true
+dashBtn.Font             = Enum.Font.GothamBold
+dashBtn.BorderSizePixel  = 0
+dashBtn.Visible          = true
+dashBtn.Parent           = dashGui
+
+local dashCorner = Instance.new("UICorner")
+dashCorner.CornerRadius = UDim.new(0, 14)
+dashCorner.Parent       = dashBtn
+
+local dashCD = Instance.new("TextLabel")
+dashCD.Size                   = UDim2.new(1, 0, 1, 0)
+dashCD.BackgroundTransparency = 1
+dashCD.TextColor3             = Color3.fromRGB(255, 255, 255)
+dashCD.TextScaled             = true
+dashCD.Font                   = Enum.Font.GothamBold
+dashCD.Text                   = ""
+dashCD.Visible                = false
+dashCD.Parent                 = dashBtn
+
+------------------------------------------------------------
+-- Dash logic
+------------------------------------------------------------
+local isDashing      = false
+local dashOnCooldown = false
+
+local function doDash()
+    if isDashing then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
+
+    isDashing = true
+    local originalSpeed = hum.WalkSpeed
+    hum.WalkSpeed = 0
+
+    local forwardDir = hrp.CFrame.LookVector
+    forwardDir = Vector3.new(forwardDir.X, 0, forwardDir.Z).Unit
+
+    local startPos  = hrp.Position
+    local targetPos = startPos + forwardDir * DASH_DISTANCE
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = {char}
+
+    local result = workspace:Raycast(startPos, forwardDir * DASH_DISTANCE, rayParams)
+    if result then
+        local hitDist = (result.Position - startPos).Magnitude
+        targetPos = startPos + forwardDir * math.max(0, hitDist - 2)
+    end
+
+    local actualDist = (targetPos - startPos).Magnitude
+    local duration   = actualDist / DASH_SPEED
+
+    local tween = TweenService:Create(
+        hrp,
+        TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {CFrame = CFrame.new(targetPos, targetPos + forwardDir)}
+    )
+    tween:Play()
+    tween.Completed:Wait()
+
+    hum.WalkSpeed = originalSpeed
+    isDashing = false
+end
+
+local function startDashCooldown()
+    dashOnCooldown = true
+    dashBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    dashBtn.Text             = ""
+    dashCD.Visible           = true
+
+    local remaining = DASH_COOLDOWN
+    while remaining > 0 do
+        dashCD.Text = tostring(remaining)
+        task.wait(1)
+        remaining  -= 1
+    end
+
+    dashCD.Visible           = false
+    dashCD.Text              = ""
+    dashBtn.Text             = "Dash"
+    dashBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
+    dashOnCooldown = false
+end
+
+dashBtn.MouseButton1Click:Connect(function()
+    if dashOnCooldown or isDashing then return end
+    task.spawn(doDash)
+    task
