@@ -1,7 +1,7 @@
 ------------------------------------------------------------
 -- ESP + Dash Script
--- ESP: Knife=Red, Gun=Blue, Innocent=Green
--- Dash: Always visible and functional
+-- Knife=Red, Gun=Blue, Innocent=Green
+-- Dash always visible and functional
 ------------------------------------------------------------
 
 local Players      = game:GetService("Players")
@@ -114,7 +114,7 @@ for _, p in ipairs(Players:GetPlayers()) do watchPlayer(p) end
 Players.PlayerAdded:Connect(watchPlayer)
 
 ------------------------------------------------------------
--- Dash Button GUI
+-- Dash GUI
 ------------------------------------------------------------
 local dashGui = Instance.new("ScreenGui")
 dashGui.Name           = "DashGui"
@@ -150,7 +150,7 @@ dashCD.Visible                = false
 dashCD.Parent                 = dashBtn
 
 ------------------------------------------------------------
--- Dash logic
+-- Dash Logic
 ------------------------------------------------------------
 local isDashing      = false
 local dashOnCooldown = false
@@ -221,4 +221,18 @@ end
 dashBtn.MouseButton1Click:Connect(function()
     if dashOnCooldown or isDashing then return end
     task.spawn(doDash)
-    task
+    task.spawn(startDashCooldown)
+end)
+
+------------------------------------------------------------
+-- Main Loop
+------------------------------------------------------------
+local lastESP = 0
+RunService.Heartbeat:Connect(function()
+    if tick() - lastESP >= 2 then
+        lastESP = tick()
+        updateESP()
+    end
+end)
+
+print("[ESP + Dash] Active")
