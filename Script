@@ -1,6 +1,7 @@
 ------------------------------------------------------------
--- Backstab Perk
--- Always visible and functional, no knife requirement
+-- Phantom World
+-- Toggleable invisibility via button
+-- Appears when ice cream is anywhere in inventory
 ------------------------------------------------------------
 
 local Players      = game:GetService("Players")
@@ -10,139 +11,289 @@ local LocalPlayer  = Players.LocalPlayer
 local PlayerGui    = LocalPlayer.PlayerGui
 local Camera       = workspace.CurrentCamera
 
-local MAX_DISTANCE  = 50
-local COOLDOWN_TIME = 10
+local ICECREAM_KEYWORDS = {"ice", "cream", "cone"}
+local INVIS_COOLDOWN    = 60
 
 ------------------------------------------------------------
--- Find player most centered on screen within 50 studs
+-- Keyword matcher
 ------------------------------------------------------------
-local function getNearestPlayerToCenter()
+local function matchesAny(name, keywords)
+    local lower = string.lower(name)
+    for _, kw in ipairs(keywords) do
+        if string.find(lower, kw) then return true end
+    end
+    return false
+end
+
+------------------------------------------------------------
+-- Check if ice cream is anywhere in inventory
+------------------------------------------------------------
+local function hasIceCreamInInventory()
     local char = LocalPlayer.Character
-    if not char then return nil end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return nil end
+    if not char then return false end
 
-    local vpSize  = Camera.ViewportSize
-    local centerX = vpSize.X / 2
-    local centerY = vpSize.Y / 2
-    local bestPlayer, bestScore = nil, math.huge
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player == LocalPlayer then continue end
-        local enemyChar = player.Character
-        if not enemyChar then continue end
-        local enemyHrp = enemyChar:FindFirstChild("HumanoidRootPart")
-        local enemyHum = enemyChar:FindFirstChildOfClass("Humanoid")
-        if not enemyHrp or not enemyHum then continue end
-        if enemyHum.Health <= 0 then continue end
-
-        local dist = (hrp.Position - enemyHrp.Position).Magnitude
-        if dist > MAX_DISTANCE then continue end
-
-        local screenPos, onScreen = Camera:WorldToViewportPoint(enemyHrp.Position)
-        if not onScreen then continue end
-
-        local dx    = screenPos.X - centerX
-        local dy    = screenPos.Y - centerY
-        local score = math.sqrt(dx * dx + dy * dy)
-
-        if score < bestScore then
-            bestScore  = score
-            bestPlayer = player
+    for _, item in ipairs(char:GetChildren()) do
+        if item:IsA("Tool") and matchesAny(item.Name, ICECREAM_KEYWORDS) then
+            return true
         end
     end
 
-    return bestPlayer
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, item in ipairs(bp:GetChildren()) do
+            if item:IsA("Tool") and matchesAny(item.Name, ICECREAM_KEYWORDS) then
+                return true
+            end
+        end
+    end
+
+    return false
 end
 
 ------------------------------------------------------------
--- Backstab
+-- State
 ------------------------------------------------------------
-local function doBackstab()
-    local target = getNearestPlayerToCenter()
-    if not target then
-        print("[Backstab] No target in range")
+local isInvisible = false
+local clone       = nil
+local cloneThread = nil
+local onCooldown  = false
+
+------------------------------------------------------------
+-- Cleanup clone
+------------------------------------------------------------
+local function cleanupClone()
+    if clone then
+        clone:Destroy()
+        clone = nil
+    end
+    if cloneThread then
+        task.cancel(cloneThread)
+        cloneThread = nil
+    end
+end
+
+------------------------------------------------------------
+-- Restore real body
+------------------------------------------------------------
+local function restoreBody(teleportToClone)
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+
+    -- Teleport back to clone position
+    if teleportToClone and clone and clone.PrimaryPart then
+        if hrp then
+            hrp.CFrame = clone.PrimaryPart.CFrame
+        end
+    end
+
+    -- Restore visibility and collision
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.Transparency = 0
+            part.CanCollide   = true
+        end
+    end
+
+    -- Restore camera
+    if hum then
+        Camera.CameraSubject = hum
+        Camera.CameraType    = Enum.CameraType.Custom
+    end
+end
+
+------------------------------------------------------------
+-- Activate Phantom World
+------------------------------------------------------------
+local function activatePhantom()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
+
+    isInvisible = true
+    local originalCFrame = hrp.CFrame
+
+    -- Create clone at current position
+    clone        = Instance.new("Model")
+    clone.Name   = "PhantomClone"
+    clone.Parent = workspace
+
+    local partMap = {}
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            local clonePart                         = part:Clone()
+            clonePart.Transparency                  = 0.5
+            clonePart.CanCollide                    = true
+            clonePart.Anchored                      = false
+            clonePart.AssemblyLinearVelocity        = Vector3.zero
+            clonePart.AssemblyAngularVelocity       = Vector3.zero
+            clonePart.Parent                        = clone
+            partMap[part]                           = clonePart
+        end
+    end
+
+    local cloneHRP = partMap[hrp]
+    if not cloneHRP then
+        cleanupClone()
+        isInvisible = false
         return
     end
 
-    local char      = LocalPlayer.Character
-    local hrp       = char and char:FindFirstChild("HumanoidRootPart")
-    local enemyChar = target.Character
-    local enemyHrp  = enemyChar and enemyChar:FindFirstChild("HumanoidRootPart")
-    if not hrp or not enemyHrp then return end
+    cloneHRP.CFrame  = originalCFrame
+    clone.PrimaryPart = cloneHRP
 
-    local behindPosition = enemyHrp.CFrame * CFrame.new(0, 0, 1.5)
-    hrp.CFrame = CFrame.new(behindPosition.Position, enemyHrp.Position)
+    -- Weld clone parts together
+    for origPart, clonePart in pairs(partMap) do
+        if clonePart ~= cloneHRP then
+            local weld   = Instance.new("WeldConstraint")
+            weld.Part0   = cloneHRP
+            weld.Part1   = clonePart
+            weld.Parent  = cloneHRP
+            local offset = hrp.CFrame:ToObjectSpace(origPart.CFrame)
+            clonePart.CFrame = cloneHRP.CFrame * offset
+        end
+    end
+
+    -- Give clone humanoid for physics/gravity
+    local cloneHum      = Instance.new("Humanoid")
+    cloneHum.WalkSpeed  = 0
+    cloneHum.JumpPower  = 0
+    cloneHum.Parent     = clone
+
+    -- Teleport real body 750 studs up
+    hrp.CFrame = originalCFrame * CFrame.new(0, 750, 0)
+
+    -- Hide real body
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.Transparency = 1
+            part.CanCollide   = false
+        end
+    end
+
+    -- Lock camera to clone head
+    local cloneHead      = clone:FindFirstChild("Head") or cloneHRP
+    Camera.CameraSubject = cloneHead
+    Camera.CameraType    = Enum.CameraType.Custom
+
+    -- Mirror movement from real body to clone
+    local lastHRPCFrame = hrp.CFrame
+    cloneThread = task.spawn(function()
+        while isInvisible do
+            local currentCFrame = hrp.CFrame
+            local deltaPos      = currentCFrame.Position - lastHRPCFrame.Position
+            deltaPos            = Vector3.new(deltaPos.X, 0, deltaPos.Z)
+            cloneHRP.CFrame     = cloneHRP.CFrame * CFrame.new(deltaPos)
+            lastHRPCFrame       = currentCFrame
+            task.wait()
+        end
+    end)
+
+    print("[Phantom World] Activated")
 end
 
 ------------------------------------------------------------
--- Backstab Button GUI
+-- Deactivate Phantom World
+------------------------------------------------------------
+local function deactivatePhantom()
+    if not isInvisible then return end
+    isInvisible = false
+
+    restoreBody(true)
+    cleanupClone()
+
+    print("[Phantom World] Deactivated")
+end
+
+------------------------------------------------------------
+-- GUI
 ------------------------------------------------------------
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name           = "BackstabGui"
+screenGui.Name           = "PhantomGui"
 screenGui.ResetOnSpawn   = false
 screenGui.IgnoreGuiInset = true
 screenGui.Parent         = PlayerGui
 
-local button = Instance.new("TextButton")
-button.Size             = UDim2.new(0, 80, 0, 80)
-button.Position         = UDim2.new(1, -95, 0.25, 0)
-button.AnchorPoint      = Vector2.new(0, 0.5)
-button.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
-button.TextColor3       = Color3.fromRGB(255, 255, 255)
-button.Text             = "Backstab"
-button.TextScaled       = true
-button.Font             = Enum.Font.GothamBold
-button.BorderSizePixel  = 0
-button.Visible          = true -- always visible
-button.Parent           = screenGui
+local phantomBtn = Instance.new("TextButton")
+phantomBtn.Size             = UDim2.new(0, 85, 0, 80)
+phantomBtn.Position         = UDim2.new(1, -95, 0.5, 0)
+phantomBtn.AnchorPoint      = Vector2.new(0, 0.5)
+phantomBtn.BackgroundColor3 = Color3.fromRGB(100, 20, 180)
+phantomBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
+phantomBtn.Text             = "Phantom\nWorld"
+phantomBtn.TextScaled       = true
+phantomBtn.Font             = Enum.Font.GothamBold
+phantomBtn.BorderSizePixel  = 0
+phantomBtn.Visible          = false
+phantomBtn.Parent           = screenGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 14)
-corner.Parent       = button
+local phantomCorner = Instance.new("UICorner")
+phantomCorner.CornerRadius = UDim.new(0, 14)
+phantomCorner.Parent       = phantomBtn
 
-local cooldownLabel = Instance.new("TextLabel")
-cooldownLabel.Size                   = UDim2.new(1, 0, 1, 0)
-cooldownLabel.BackgroundTransparency = 1
-cooldownLabel.TextColor3             = Color3.fromRGB(255, 255, 255)
-cooldownLabel.TextScaled             = true
-cooldownLabel.Font                   = Enum.Font.GothamBold
-cooldownLabel.Text                   = ""
-cooldownLabel.Visible                = false
-cooldownLabel.Parent                 = button
+local cdLabel = Instance.new("TextLabel")
+cdLabel.Size                   = UDim2.new(1, 0, 1, 0)
+cdLabel.BackgroundTransparency = 1
+cdLabel.TextColor3             = Color3.fromRGB(255, 255, 255)
+cdLabel.TextScaled             = true
+cdLabel.Font                   = Enum.Font.GothamBold
+cdLabel.Text                   = ""
+cdLabel.Visible                = false
+cdLabel.Parent                 = phantomBtn
 
 ------------------------------------------------------------
--- Cooldown
+-- Cooldown (only starts when toggled OFF)
 ------------------------------------------------------------
-local onCooldown = false
-
 local function startCooldown()
     onCooldown = true
-    button.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    button.Text             = ""
-    cooldownLabel.Visible   = true
+    phantomBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    phantomBtn.Text             = ""
+    cdLabel.Visible             = true
 
-    local remaining = COOLDOWN_TIME
+    local remaining = INVIS_COOLDOWN
     while remaining > 0 do
-        cooldownLabel.Text = tostring(remaining)
+        cdLabel.Text = tostring(remaining)
         task.wait(1)
-        remaining -= 1
+        remaining   -= 1
     end
 
-    cooldownLabel.Visible   = false
-    cooldownLabel.Text      = ""
-    button.Text             = "Backstab"
-    button.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+    cdLabel.Visible             = false
+    cdLabel.Text                = ""
+    phantomBtn.Text             = "Phantom\nWorld"
+    phantomBtn.BackgroundColor3 = Color3.fromRGB(100, 20, 180)
     onCooldown = false
 end
 
 ------------------------------------------------------------
--- Button click
+-- Toggle on click
 ------------------------------------------------------------
-button.MouseButton1Click:Connect(function()
+phantomBtn.MouseButton1Click:Connect(function()
     if onCooldown then return end
-    doBackstab()
-    task.spawn(startCooldown)
+
+    if isInvisible then
+        -- Toggle OFF
+        deactivatePhantom()
+        task.spawn(startCooldown)
+        phantomBtn.BackgroundColor3 = Color3.fromRGB(100, 20, 180)
+        phantomBtn.Text             = "Phantom\nWorld"
+    else
+        -- Toggle ON
+        if not hasIceCreamInInventory() then return end
+        phantomBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 255)
+        phantomBtn.Text             = "Phantom\nON"
+        task.spawn(activatePhantom)
+    end
 end)
 
-print("[Backstab] Active — always on")
+------------------------------------------------------------
+-- Show button only when ice cream is in inventory
+------------------------------------------------------------
+RunService.Heartbeat:Connect(function()
+    if onCooldown then return end
+    phantomBtn.Visible = hasIceCreamInInventory()
+end)
+
+print("[Phantom World] Ready")
