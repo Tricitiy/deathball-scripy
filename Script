@@ -1,18 +1,16 @@
 ------------------------------------------------------------
--- Phantom World (Fixed)
--- Toggleable invisibility via button
--- Appears when ice cream is anywhere in inventory
+-- Invisibility — toggled by holding ice cream
+-- Based on original script by xXHaNdEROXx
 ------------------------------------------------------------
 
-local Players      = game:GetService("Players")
-local RunService   = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local LocalPlayer  = Players.LocalPlayer
-local PlayerGui    = LocalPlayer.PlayerGui
-local Camera       = workspace.CurrentCamera
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local LocalPlayer      = Players.LocalPlayer
 
-local ICECREAM_KEYWORDS = {"ice", "cream", "cone"}
-local INVIS_COOLDOWN    = 60
+local ICECREAM_KEYWORDS     = {"ice", "cream", "cone"}
+local INVISIBILITY_POSITION = Vector3.new(-25.95, 84, 3537.55)
+
+local isInvisible = false
 
 ------------------------------------------------------------
 -- Keyword matcher
@@ -26,325 +24,113 @@ local function matchesAny(name, keywords)
 end
 
 ------------------------------------------------------------
--- Check if ice cream is anywhere in inventory
+-- Check if ice cream is EQUIPPED (held, not just in backpack)
 ------------------------------------------------------------
-local function hasIceCreamInInventory()
+local function isHoldingIceCream()
     local char = LocalPlayer.Character
     if not char then return false end
-
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Tool") and matchesAny(item.Name, ICECREAM_KEYWORDS) then
             return true
         end
     end
-
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") and matchesAny(item.Name, ICECREAM_KEYWORDS) then
-                return true
-            end
-        end
-    end
-
     return false
 end
 
 ------------------------------------------------------------
--- State
+-- Utility
 ------------------------------------------------------------
-local isInvisible = false
-local clone       = nil
-local cloneThread = nil
-local onCooldown  = false
-
-------------------------------------------------------------
--- Cleanup clone
-------------------------------------------------------------
-local function cleanupClone()
-    if clone then
-        clone:Destroy()
-        clone = nil
-    end
-    if cloneThread then
-        task.cancel(cloneThread)
-        cloneThread = nil
-    end
-end
-
-------------------------------------------------------------
--- Restore real body
-------------------------------------------------------------
-local function restoreBody()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
-
-    -- Teleport back to clone position
-    if clone and clone.PrimaryPart and hrp then
-        hrp.CFrame = clone.PrimaryPart.CFrame
-    end
-
-    -- Restore visibility and collision
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.Transparency = 0
-            part.CanCollide   = true
+local function setTransparency(character, transparency)
+    for _, descendant in ipairs(character:GetDescendants()) do
+        if descendant:IsA("BasePart") or descendant:IsA("Decal") then
+            descendant.Transparency = transparency
         end
     end
-
-    -- Restore camera
-    if hum then
-        Camera.CameraSubject = hum
-        Camera.CameraType    = Enum.CameraType.Custom
-    end
 end
 
 ------------------------------------------------------------
--- Activate Phantom World
+-- Activate invisibility
 ------------------------------------------------------------
-local function activatePhantom()
+local function activateInvisibility()
     local char = LocalPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hrp or not hum then return end
+    if not hrp then return end
 
     isInvisible = true
 
-    -- Save exact current position BEFORE doing anything
-    local originalCFrame = hrp.CFrame
+    local savedCFrame = hrp.CFrame
 
-    ------------------------------------------------------------
-    -- Step 1: Build clone AT exact current position
-    ------------------------------------------------------------
-    clone             = Instance.new("Model")
-    clone.Name        = "PhantomClone"
-    clone.Parent      = workspace
+    -- Move to invisibility position
+    char:MoveTo(INVISIBILITY_POSITION)
+    task.wait(0.15)
 
-    -- Clone only the visual parts (not tools/accessories that might offset)
-    local cloneHRP = nil
-    local partMap  = {}
+    -- Create invisible seat
+    local seat          = Instance.new("Seat")
+    seat.Name           = "invischair"
+    seat.Anchored       = false
+    seat.CanCollide     = false
+    seat.Transparency   = 1
+    seat.Position       = INVISIBILITY_POSITION
+    seat.Parent         = workspace
 
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            local cp              = Instance.new("Part")
-            cp.Size               = part.Size
-            cp.CFrame             = part.CFrame -- exact world position
-            cp.Color              = part.Color
-            cp.Material           = part.Material
-            cp.Transparency       = 0.5
-            cp.CanCollide         = false -- clone doesn't physically collide
-            cp.Anchored           = false
-            cp.CastShadow         = false
-            cp.Parent             = clone
-            partMap[part]         = cp
-
-            if part == hrp then
-                cloneHRP          = cp
-                clone.PrimaryPart = cp
-            end
-        end
+    -- Weld seat to torso
+    local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+    if torso then
+        local weld      = Instance.new("Weld")
+        weld.Part0      = seat
+        weld.Part1      = torso
+        weld.Parent     = seat
     end
 
-    if not cloneHRP then
-        cleanupClone()
-        isInvisible = false
-        return
-    end
+    task.wait()
+    seat.CFrame = savedCFrame
 
-    -- Weld all clone parts to clone HRP
-    for origPart, clonePart in pairs(partMap) do
-        if clonePart ~= cloneHRP then
-            local weld      = Instance.new("WeldConstraint")
-            weld.Part0      = cloneHRP
-            weld.Part1      = clonePart
-            weld.Parent     = cloneHRP
-        end
-    end
+    -- Make character transparent
+    setTransparency(char, 1)
 
-    -- Give clone a humanoid so it has gravity
-    local cloneHum     = Instance.new("Humanoid")
-    cloneHum.WalkSpeed = 0
-    cloneHum.JumpPower = 0
-    cloneHum.Parent    = clone
-
-    ------------------------------------------------------------
-    -- Step 2: Teleport REAL body 750 studs up
-    ------------------------------------------------------------
-    hrp.CFrame = originalCFrame * CFrame.new(0, 750, 0)
-
-    -- Hide real body completely
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.Transparency = 1
-            part.CanCollide   = false
-        end
-    end
-
-    ------------------------------------------------------------
-    -- Step 3: Lock camera to clone HRP
-    ------------------------------------------------------------
-    local cloneHead      = clone:FindFirstChild("Head") or cloneHRP
-    Camera.CameraSubject = cloneHead
-    Camera.CameraType    = Enum.CameraType.Custom
-
-    ------------------------------------------------------------
-    -- Step 4: Mirror real body movement + jumping to clone
-    -- Track delta movement and apply it to clone each frame
-    ------------------------------------------------------------
-    local lastRealPos = hrp.Position
-
-    cloneThread = task.spawn(function()
-        while isInvisible do
-            task.wait()
-
-            local char2 = LocalPlayer.Character
-            if not char2 then break end
-            local hrp2 = char2:FindFirstChild("HumanoidRootPart")
-            local hum2 = char2:FindFirstChildOfClass("Humanoid")
-            if not hrp2 or not hum2 then break end
-            if not clone or not clone.PrimaryPart then break end
-
-            -- Calculate movement delta (XZ only from real body)
-            local currentPos = hrp2.Position
-            local delta      = currentPos - lastRealPos
-            local deltaXZ    = Vector3.new(delta.X, 0, delta.Z)
-            lastRealPos      = currentPos
-
-            -- Apply XZ movement to clone
-            cloneHRP.CFrame = cloneHRP.CFrame * CFrame.new(deltaXZ)
-
-            -- Mirror rotation (facing direction)
-            local realLook   = hrp2.CFrame.LookVector
-            realLook         = Vector3.new(realLook.X, 0, realLook.Z)
-            if realLook.Magnitude > 0 then
-                cloneHRP.CFrame = CFrame.new(cloneHRP.Position, cloneHRP.Position + realLook)
-            end
-
-            -- Mirror jumping — apply Y velocity from real body to clone
-            local realVelY = hrp2.AssemblyLinearVelocity.Y
-            if math.abs(realVelY) > 1 then
-                cloneHRP.AssemblyLinearVelocity = Vector3.new(
-                    cloneHRP.AssemblyLinearVelocity.X,
-                    realVelY,
-                    cloneHRP.AssemblyLinearVelocity.Z
-                )
-            end
-        end
-    end)
-
-    print("[Phantom World] Activated")
+    print("[Invisibility] ON")
 end
 
 ------------------------------------------------------------
--- Deactivate Phantom World
+-- Deactivate invisibility
 ------------------------------------------------------------
-local function deactivatePhantom()
-    if not isInvisible then return end
+local function deactivateInvisibility()
+    local char = LocalPlayer.Character
+    if not char then return end
+
     isInvisible = false
-    restoreBody()
-    cleanupClone()
-    print("[Phantom World] Deactivated")
+
+    -- Remove invisible chair
+    local invisChair = workspace:FindFirstChild("invischair")
+    if invisChair then invisChair:Destroy() end
+
+    -- Restore visibility
+    setTransparency(char, 0)
+
+    print("[Invisibility] OFF")
 end
 
 ------------------------------------------------------------
--- GUI
+-- Reset on respawn
 ------------------------------------------------------------
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name           = "PhantomGui"
-screenGui.ResetOnSpawn   = false
-screenGui.IgnoreGuiInset = true
-screenGui.Parent         = PlayerGui
-
-local phantomBtn = Instance.new("TextButton")
-phantomBtn.Size             = UDim2.new(0, 85, 0, 80)
-phantomBtn.Position         = UDim2.new(1, -95, 0.5, 0)
-phantomBtn.AnchorPoint      = Vector2.new(0, 0.5)
-phantomBtn.BackgroundColor3 = Color3.fromRGB(100, 20, 180)
-phantomBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
-phantomBtn.Text             = "Phantom\nWorld"
-phantomBtn.TextScaled       = true
-phantomBtn.Font             = Enum.Font.GothamBold
-phantomBtn.BorderSizePixel  = 0
-phantomBtn.Visible          = false
-phantomBtn.Parent           = screenGui
-
-local phantomCorner = Instance.new("UICorner")
-phantomCorner.CornerRadius = UDim.new(0, 14)
-phantomCorner.Parent       = phantomBtn
-
-local cdLabel = Instance.new("TextLabel")
-cdLabel.Size                   = UDim2.new(1, 0, 1, 0)
-cdLabel.BackgroundTransparency = 1
-cdLabel.TextColor3             = Color3.fromRGB(255, 255, 255)
-cdLabel.TextScaled             = true
-cdLabel.Font                   = Enum.Font.GothamBold
-cdLabel.Text                   = ""
-cdLabel.Visible                = false
-cdLabel.Parent                 = phantomBtn
-
-------------------------------------------------------------
--- Cooldown (starts when toggled OFF)
-------------------------------------------------------------
-local function startCooldown()
-    onCooldown = true
-    phantomBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    phantomBtn.Text             = ""
-    cdLabel.Visible             = true
-
-    local remaining = INVIS_COOLDOWN
-    while remaining > 0 do
-        cdLabel.Text = tostring(remaining)
-        task.wait(1)
-        remaining   -= 1
-    end
-
-    cdLabel.Visible             = false
-    cdLabel.Text                = ""
-    phantomBtn.Text             = "Phantom\nWorld"
-    phantomBtn.BackgroundColor3 = Color3.fromRGB(100, 20, 180)
-    onCooldown = false
-end
-
-------------------------------------------------------------
--- Toggle on click
-------------------------------------------------------------
-phantomBtn.MouseButton1Click:Connect(function()
-    if onCooldown then return end
-
-    if isInvisible then
-        deactivatePhantom()
-        task.spawn(startCooldown)
-    else
-        if not hasIceCreamInInventory() then return end
-        phantomBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 255)
-        phantomBtn.Text             = "Phantom\nON"
-        task.spawn(activatePhantom)
-    end
+LocalPlayer.CharacterAdded:Connect(function()
+    isInvisible = false
+    local invisChair = workspace:FindFirstChild("invischair")
+    if invisChair then invisChair:Destroy() end
 end)
 
 ------------------------------------------------------------
--- Show/hide button — checks inventory every frame
--- Hides immediately when ice cream is gone
--- Also force deactivates if ice cream removed while active
+-- Main loop — toggle based on ice cream equip state
 ------------------------------------------------------------
 RunService.Heartbeat:Connect(function()
-    local hasIceCream = hasIceCreamInInventory()
+    local holding = isHoldingIceCream()
 
-    -- Force deactivate if ice cream removed while phantom is on
-    if isInvisible and not hasIceCream then
-        deactivatePhantom()
-        task.spawn(startCooldown)
-    end
-
-    -- Hide button during cooldown or when no ice cream
-    if onCooldown then
-        phantomBtn.Visible = false
-    else
-        phantomBtn.Visible = hasIceCream
+    if holding and not isInvisible then
+        activateInvisibility()
+    elseif not holding and isInvisible then
+        deactivateInvisibility()
     end
 end)
 
-print("[Phantom World] Ready")
+print("[Invisibility] Ready — equip ice cream to activate")
