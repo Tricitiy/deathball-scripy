@@ -1,5 +1,5 @@
 ------------------------------------------------------------
--- Phantom World
+-- Phantom World (Fixed)
 -- Toggleable invisibility via button
 -- Appears when ice cream is anywhere in inventory
 ------------------------------------------------------------
@@ -75,17 +75,15 @@ end
 ------------------------------------------------------------
 -- Restore real body
 ------------------------------------------------------------
-local function restoreBody(teleportToClone)
+local function restoreBody()
     local char = LocalPlayer.Character
     if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
 
     -- Teleport back to clone position
-    if teleportToClone and clone and clone.PrimaryPart then
-        if hrp then
-            hrp.CFrame = clone.PrimaryPart.CFrame
-        end
+    if clone and clone.PrimaryPart and hrp then
+        hrp.CFrame = clone.PrimaryPart.CFrame
     end
 
     -- Restore visibility and collision
@@ -114,59 +112,70 @@ local function activatePhantom()
     if not hrp or not hum then return end
 
     isInvisible = true
+
+    -- Save exact current position BEFORE doing anything
     local originalCFrame = hrp.CFrame
 
-    -- Create clone at current position
-    clone        = Instance.new("Model")
-    clone.Name   = "PhantomClone"
-    clone.Parent = workspace
+    ------------------------------------------------------------
+    -- Step 1: Build clone AT exact current position
+    ------------------------------------------------------------
+    clone             = Instance.new("Model")
+    clone.Name        = "PhantomClone"
+    clone.Parent      = workspace
 
-    local partMap = {}
+    -- Clone only the visual parts (not tools/accessories that might offset)
+    local cloneHRP = nil
+    local partMap  = {}
+
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
-            local clonePart                         = part:Clone()
-            clonePart.Transparency                  = 0.5
-            clonePart.CanCollide                    = true
-            clonePart.Anchored                      = false
-            clonePart.AssemblyLinearVelocity        = Vector3.zero
-            clonePart.AssemblyAngularVelocity       = Vector3.zero
-            clonePart.Parent                        = clone
-            partMap[part]                           = clonePart
+            local cp              = Instance.new("Part")
+            cp.Size               = part.Size
+            cp.CFrame             = part.CFrame -- exact world position
+            cp.Color              = part.Color
+            cp.Material           = part.Material
+            cp.Transparency       = 0.5
+            cp.CanCollide         = false -- clone doesn't physically collide
+            cp.Anchored           = false
+            cp.CastShadow         = false
+            cp.Parent             = clone
+            partMap[part]         = cp
+
+            if part == hrp then
+                cloneHRP          = cp
+                clone.PrimaryPart = cp
+            end
         end
     end
 
-    local cloneHRP = partMap[hrp]
     if not cloneHRP then
         cleanupClone()
         isInvisible = false
         return
     end
 
-    cloneHRP.CFrame  = originalCFrame
-    clone.PrimaryPart = cloneHRP
-
-    -- Weld clone parts together
+    -- Weld all clone parts to clone HRP
     for origPart, clonePart in pairs(partMap) do
         if clonePart ~= cloneHRP then
-            local weld   = Instance.new("WeldConstraint")
-            weld.Part0   = cloneHRP
-            weld.Part1   = clonePart
-            weld.Parent  = cloneHRP
-            local offset = hrp.CFrame:ToObjectSpace(origPart.CFrame)
-            clonePart.CFrame = cloneHRP.CFrame * offset
+            local weld      = Instance.new("WeldConstraint")
+            weld.Part0      = cloneHRP
+            weld.Part1      = clonePart
+            weld.Parent     = cloneHRP
         end
     end
 
-    -- Give clone humanoid for physics/gravity
-    local cloneHum      = Instance.new("Humanoid")
-    cloneHum.WalkSpeed  = 0
-    cloneHum.JumpPower  = 0
-    cloneHum.Parent     = clone
+    -- Give clone a humanoid so it has gravity
+    local cloneHum     = Instance.new("Humanoid")
+    cloneHum.WalkSpeed = 0
+    cloneHum.JumpPower = 0
+    cloneHum.Parent    = clone
 
-    -- Teleport real body 750 studs up
+    ------------------------------------------------------------
+    -- Step 2: Teleport REAL body 750 studs up
+    ------------------------------------------------------------
     hrp.CFrame = originalCFrame * CFrame.new(0, 750, 0)
 
-    -- Hide real body
+    -- Hide real body completely
     for _, part in ipairs(char:GetDescendants()) do
         if part:IsA("BasePart") then
             part.Transparency = 1
@@ -174,21 +183,55 @@ local function activatePhantom()
         end
     end
 
-    -- Lock camera to clone head
+    ------------------------------------------------------------
+    -- Step 3: Lock camera to clone HRP
+    ------------------------------------------------------------
     local cloneHead      = clone:FindFirstChild("Head") or cloneHRP
     Camera.CameraSubject = cloneHead
     Camera.CameraType    = Enum.CameraType.Custom
 
-    -- Mirror movement from real body to clone
-    local lastHRPCFrame = hrp.CFrame
+    ------------------------------------------------------------
+    -- Step 4: Mirror real body movement + jumping to clone
+    -- Track delta movement and apply it to clone each frame
+    ------------------------------------------------------------
+    local lastRealPos = hrp.Position
+
     cloneThread = task.spawn(function()
         while isInvisible do
-            local currentCFrame = hrp.CFrame
-            local deltaPos      = currentCFrame.Position - lastHRPCFrame.Position
-            deltaPos            = Vector3.new(deltaPos.X, 0, deltaPos.Z)
-            cloneHRP.CFrame     = cloneHRP.CFrame * CFrame.new(deltaPos)
-            lastHRPCFrame       = currentCFrame
             task.wait()
+
+            local char2 = LocalPlayer.Character
+            if not char2 then break end
+            local hrp2 = char2:FindFirstChild("HumanoidRootPart")
+            local hum2 = char2:FindFirstChildOfClass("Humanoid")
+            if not hrp2 or not hum2 then break end
+            if not clone or not clone.PrimaryPart then break end
+
+            -- Calculate movement delta (XZ only from real body)
+            local currentPos = hrp2.Position
+            local delta      = currentPos - lastRealPos
+            local deltaXZ    = Vector3.new(delta.X, 0, delta.Z)
+            lastRealPos      = currentPos
+
+            -- Apply XZ movement to clone
+            cloneHRP.CFrame = cloneHRP.CFrame * CFrame.new(deltaXZ)
+
+            -- Mirror rotation (facing direction)
+            local realLook   = hrp2.CFrame.LookVector
+            realLook         = Vector3.new(realLook.X, 0, realLook.Z)
+            if realLook.Magnitude > 0 then
+                cloneHRP.CFrame = CFrame.new(cloneHRP.Position, cloneHRP.Position + realLook)
+            end
+
+            -- Mirror jumping — apply Y velocity from real body to clone
+            local realVelY = hrp2.AssemblyLinearVelocity.Y
+            if math.abs(realVelY) > 1 then
+                cloneHRP.AssemblyLinearVelocity = Vector3.new(
+                    cloneHRP.AssemblyLinearVelocity.X,
+                    realVelY,
+                    cloneHRP.AssemblyLinearVelocity.Z
+                )
+            end
         end
     end)
 
@@ -201,10 +244,8 @@ end
 local function deactivatePhantom()
     if not isInvisible then return end
     isInvisible = false
-
-    restoreBody(true)
+    restoreBody()
     cleanupClone()
-
     print("[Phantom World] Deactivated")
 end
 
@@ -245,7 +286,7 @@ cdLabel.Visible                = false
 cdLabel.Parent                 = phantomBtn
 
 ------------------------------------------------------------
--- Cooldown (only starts when toggled OFF)
+-- Cooldown (starts when toggled OFF)
 ------------------------------------------------------------
 local function startCooldown()
     onCooldown = true
@@ -274,13 +315,9 @@ phantomBtn.MouseButton1Click:Connect(function()
     if onCooldown then return end
 
     if isInvisible then
-        -- Toggle OFF
         deactivatePhantom()
         task.spawn(startCooldown)
-        phantomBtn.BackgroundColor3 = Color3.fromRGB(100, 20, 180)
-        phantomBtn.Text             = "Phantom\nWorld"
     else
-        -- Toggle ON
         if not hasIceCreamInInventory() then return end
         phantomBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 255)
         phantomBtn.Text             = "Phantom\nON"
@@ -289,11 +326,25 @@ phantomBtn.MouseButton1Click:Connect(function()
 end)
 
 ------------------------------------------------------------
--- Show button only when ice cream is in inventory
+-- Show/hide button — checks inventory every frame
+-- Hides immediately when ice cream is gone
+-- Also force deactivates if ice cream removed while active
 ------------------------------------------------------------
 RunService.Heartbeat:Connect(function()
-    if onCooldown then return end
-    phantomBtn.Visible = hasIceCreamInInventory()
+    local hasIceCream = hasIceCreamInInventory()
+
+    -- Force deactivate if ice cream removed while phantom is on
+    if isInvisible and not hasIceCream then
+        deactivatePhantom()
+        task.spawn(startCooldown)
+    end
+
+    -- Hide button during cooldown or when no ice cream
+    if onCooldown then
+        phantomBtn.Visible = false
+    else
+        phantomBtn.Visible = hasIceCream
+    end
 end)
 
 print("[Phantom World] Ready")
