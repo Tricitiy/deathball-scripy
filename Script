@@ -1,7 +1,6 @@
 ------------------------------------------------------------
--- ESP + Dash Script
--- Knife=Red, Gun=Blue, Innocent=Green
--- Dash always visible and functional
+-- Backstab Perk
+-- Always visible and functional, no knife requirement
 ------------------------------------------------------------
 
 local Players      = game:GetService("Players")
@@ -9,230 +8,141 @@ local RunService   = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer  = Players.LocalPlayer
 local PlayerGui    = LocalPlayer.PlayerGui
+local Camera       = workspace.CurrentCamera
+
+local MAX_DISTANCE  = 50
+local COOLDOWN_TIME = 10
 
 ------------------------------------------------------------
--- Config
+-- Find player most centered on screen within 50 studs
 ------------------------------------------------------------
-local KNIFE_KEYWORDS = {"knife", "blade", "dagger", "shiv", "shard", "slash"}
-local GUN_KEYWORDS   = {"gun", "sheriff", "pistol", "revolver"}
+local function getNearestPlayerToCenter()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
 
-local COLOR_KNIFE    = Color3.fromRGB(255, 50,  50)
-local COLOR_GUN      = Color3.fromRGB(50,  120, 255)
-local COLOR_INNOCENT = Color3.fromRGB(50,  220, 80)
+    local vpSize  = Camera.ViewportSize
+    local centerX = vpSize.X / 2
+    local centerY = vpSize.Y / 2
+    local bestPlayer, bestScore = nil, math.huge
 
-local FILL_TRANSPARENCY    = 1
-local OUTLINE_TRANSPARENCY = 0
-
-local DASH_DISTANCE  = 17
-local DASH_SPEED     = 55
-local DASH_COOLDOWN  = 8
-
-------------------------------------------------------------
--- Keyword matcher
-------------------------------------------------------------
-local function matchesAny(name, keywords)
-    local lower = string.lower(name)
-    for _, kw in ipairs(keywords) do
-        if string.find(lower, kw) then return true end
-    end
-    return false
-end
-
-------------------------------------------------------------
--- Weapon type detection
-------------------------------------------------------------
-local function getWeaponType(player)
-    local char = player.Character
-    if char then
-        for _, item in ipairs(char:GetChildren()) do
-            if item:IsA("Tool") then
-                if matchesAny(item.Name, KNIFE_KEYWORDS) then return "knife" end
-                if matchesAny(item.Name, GUN_KEYWORDS)   then return "gun"   end
-            end
-        end
-    end
-    local bp = player:FindFirstChild("Backpack")
-    if bp then
-        for _, item in ipairs(bp:GetChildren()) do
-            if item:IsA("Tool") then
-                if matchesAny(item.Name, KNIFE_KEYWORDS) then return "knife" end
-                if matchesAny(item.Name, GUN_KEYWORDS)   then return "gun"   end
-            end
-        end
-    end
-    return "none"
-end
-
-------------------------------------------------------------
--- ESP
-------------------------------------------------------------
-local function applyHighlight(character, color)
-    local hl = character:FindFirstChildOfClass("Highlight")
-    if not hl then
-        hl = Instance.new("Highlight")
-        hl.Adornee = character
-        hl.Parent  = character
-    end
-    hl.FillColor           = color
-    hl.OutlineColor        = color
-    hl.FillTransparency    = FILL_TRANSPARENCY
-    hl.OutlineTransparency = OUTLINE_TRANSPARENCY
-    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-end
-
-local function updateESP()
     for _, player in ipairs(Players:GetPlayers()) do
         if player == LocalPlayer then continue end
-        local char = player.Character
-        if not char then continue end
-        local ok, weapon = pcall(getWeaponType, player)
-        if not ok then continue end
-        if weapon == "knife" then
-            applyHighlight(char, COLOR_KNIFE)
-        elseif weapon == "gun" then
-            applyHighlight(char, COLOR_GUN)
-        else
-            applyHighlight(char, COLOR_INNOCENT)
+        local enemyChar = player.Character
+        if not enemyChar then continue end
+        local enemyHrp = enemyChar:FindFirstChild("HumanoidRootPart")
+        local enemyHum = enemyChar:FindFirstChildOfClass("Humanoid")
+        if not enemyHrp or not enemyHum then continue end
+        if enemyHum.Health <= 0 then continue end
+
+        local dist = (hrp.Position - enemyHrp.Position).Magnitude
+        if dist > MAX_DISTANCE then continue end
+
+        local screenPos, onScreen = Camera:WorldToViewportPoint(enemyHrp.Position)
+        if not onScreen then continue end
+
+        local dx    = screenPos.X - centerX
+        local dy    = screenPos.Y - centerY
+        local score = math.sqrt(dx * dx + dy * dy)
+
+        if score < bestScore then
+            bestScore  = score
+            bestPlayer = player
         end
     end
+
+    return bestPlayer
 end
 
-local function watchPlayer(player)
-    player.CharacterAdded:Connect(function()
-        task.wait(1)
-        local ok, weapon = pcall(getWeaponType, player)
-        if ok and player.Character then
-            local color = weapon == "knife" and COLOR_KNIFE
-                       or weapon == "gun"   and COLOR_GUN
-                       or COLOR_INNOCENT
-            applyHighlight(player.Character, color)
-        end
-    end)
-end
-
-for _, p in ipairs(Players:GetPlayers()) do watchPlayer(p) end
-Players.PlayerAdded:Connect(watchPlayer)
-
 ------------------------------------------------------------
--- Dash GUI
+-- Backstab
 ------------------------------------------------------------
-local dashGui = Instance.new("ScreenGui")
-dashGui.Name           = "DashGui"
-dashGui.ResetOnSpawn   = false
-dashGui.IgnoreGuiInset = true
-dashGui.Parent         = PlayerGui
-
-local dashBtn = Instance.new("TextButton")
-dashBtn.Size             = UDim2.new(0, 80, 0, 80)
-dashBtn.Position         = UDim2.new(1, -95, 0.25, 0)
-dashBtn.AnchorPoint      = Vector2.new(0, 0.5)
-dashBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
-dashBtn.TextColor3       = Color3.fromRGB(255, 255, 255)
-dashBtn.Text             = "Dash"
-dashBtn.TextScaled       = true
-dashBtn.Font             = Enum.Font.GothamBold
-dashBtn.BorderSizePixel  = 0
-dashBtn.Visible          = true
-dashBtn.Parent           = dashGui
-
-local dashCorner = Instance.new("UICorner")
-dashCorner.CornerRadius = UDim.new(0, 14)
-dashCorner.Parent       = dashBtn
-
-local dashCD = Instance.new("TextLabel")
-dashCD.Size                   = UDim2.new(1, 0, 1, 0)
-dashCD.BackgroundTransparency = 1
-dashCD.TextColor3             = Color3.fromRGB(255, 255, 255)
-dashCD.TextScaled             = true
-dashCD.Font                   = Enum.Font.GothamBold
-dashCD.Text                   = ""
-dashCD.Visible                = false
-dashCD.Parent                 = dashBtn
-
-------------------------------------------------------------
--- Dash Logic
-------------------------------------------------------------
-local isDashing      = false
-local dashOnCooldown = false
-
-local function doDash()
-    if isDashing then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hrp or not hum then return end
-
-    isDashing = true
-    local originalSpeed = hum.WalkSpeed
-    hum.WalkSpeed = 0
-
-    local forwardDir = hrp.CFrame.LookVector
-    forwardDir = Vector3.new(forwardDir.X, 0, forwardDir.Z).Unit
-
-    local startPos  = hrp.Position
-    local targetPos = startPos + forwardDir * DASH_DISTANCE
-
-    local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-    rayParams.FilterDescendantsInstances = {char}
-
-    local result = workspace:Raycast(startPos, forwardDir * DASH_DISTANCE, rayParams)
-    if result then
-        local hitDist = (result.Position - startPos).Magnitude
-        targetPos = startPos + forwardDir * math.max(0, hitDist - 2)
+local function doBackstab()
+    local target = getNearestPlayerToCenter()
+    if not target then
+        print("[Backstab] No target in range")
+        return
     end
 
-    local actualDist = (targetPos - startPos).Magnitude
-    local duration   = actualDist / DASH_SPEED
+    local char      = LocalPlayer.Character
+    local hrp       = char and char:FindFirstChild("HumanoidRootPart")
+    local enemyChar = target.Character
+    local enemyHrp  = enemyChar and enemyChar:FindFirstChild("HumanoidRootPart")
+    if not hrp or not enemyHrp then return end
 
-    local tween = TweenService:Create(
-        hrp,
-        TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-        {CFrame = CFrame.new(targetPos, targetPos + forwardDir)}
-    )
-    tween:Play()
-    tween.Completed:Wait()
-
-    hum.WalkSpeed = originalSpeed
-    isDashing = false
+    local behindPosition = enemyHrp.CFrame * CFrame.new(0, 0, 1.5)
+    hrp.CFrame = CFrame.new(behindPosition.Position, enemyHrp.Position)
 end
 
-local function startDashCooldown()
-    dashOnCooldown = true
-    dashBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    dashBtn.Text             = ""
-    dashCD.Visible           = true
+------------------------------------------------------------
+-- Backstab Button GUI
+------------------------------------------------------------
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name           = "BackstabGui"
+screenGui.ResetOnSpawn   = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent         = PlayerGui
 
-    local remaining = DASH_COOLDOWN
+local button = Instance.new("TextButton")
+button.Size             = UDim2.new(0, 80, 0, 80)
+button.Position         = UDim2.new(1, -95, 0.25, 0)
+button.AnchorPoint      = Vector2.new(0, 0.5)
+button.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+button.TextColor3       = Color3.fromRGB(255, 255, 255)
+button.Text             = "Backstab"
+button.TextScaled       = true
+button.Font             = Enum.Font.GothamBold
+button.BorderSizePixel  = 0
+button.Visible          = true -- always visible
+button.Parent           = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 14)
+corner.Parent       = button
+
+local cooldownLabel = Instance.new("TextLabel")
+cooldownLabel.Size                   = UDim2.new(1, 0, 1, 0)
+cooldownLabel.BackgroundTransparency = 1
+cooldownLabel.TextColor3             = Color3.fromRGB(255, 255, 255)
+cooldownLabel.TextScaled             = true
+cooldownLabel.Font                   = Enum.Font.GothamBold
+cooldownLabel.Text                   = ""
+cooldownLabel.Visible                = false
+cooldownLabel.Parent                 = button
+
+------------------------------------------------------------
+-- Cooldown
+------------------------------------------------------------
+local onCooldown = false
+
+local function startCooldown()
+    onCooldown = true
+    button.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    button.Text             = ""
+    cooldownLabel.Visible   = true
+
+    local remaining = COOLDOWN_TIME
     while remaining > 0 do
-        dashCD.Text = tostring(remaining)
+        cooldownLabel.Text = tostring(remaining)
         task.wait(1)
-        remaining  -= 1
+        remaining -= 1
     end
 
-    dashCD.Visible           = false
-    dashCD.Text              = ""
-    dashBtn.Text             = "Dash"
-    dashBtn.BackgroundColor3 = Color3.fromRGB(30, 100, 200)
-    dashOnCooldown = false
+    cooldownLabel.Visible   = false
+    cooldownLabel.Text      = ""
+    button.Text             = "Backstab"
+    button.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+    onCooldown = false
 end
 
-dashBtn.MouseButton1Click:Connect(function()
-    if dashOnCooldown or isDashing then return end
-    task.spawn(doDash)
-    task.spawn(startDashCooldown)
+------------------------------------------------------------
+-- Button click
+------------------------------------------------------------
+button.MouseButton1Click:Connect(function()
+    if onCooldown then return end
+    doBackstab()
+    task.spawn(startCooldown)
 end)
 
-------------------------------------------------------------
--- Main Loop
-------------------------------------------------------------
-local lastESP = 0
-RunService.Heartbeat:Connect(function()
-    if tick() - lastESP >= 2 then
-        lastESP = tick()
-        updateESP()
-    end
-end)
-
-print("[ESP + Dash] Active")
+print("[Backstab] Active — always on")
